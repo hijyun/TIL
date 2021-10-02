@@ -1,0 +1,417 @@
+---
+title: "fpp3_ch 2_Time_Series_Graphics"
+author: "Ji Hyun Kim"
+date: '2020 9 24 '
+output:
+  html_document:
+    fig_caption: yes
+    fig_height: 5
+    fig_width: 7
+    highlight: kate
+    theme: yeti
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+# fpp3 : Ch 2 Time Series Graphics
+## ch2. TimeSeries Graphis
+### 2.1 tsibble objects
+* tsibble : 시간처리를 위해 tidyverse(의 tibble)를 확장한 객체
+
+### index variable
+* 인덱스 변수: 시점을 표시하는 변수
+* 예 : Year(연도)를 index로 하는 시계열 Observation의 생성
+
+```{r}
+library(tidyverse)
+library(tsibble)
+library(feasts)
+library(fabletools)
+```
+```{r}
+y <- tsibble(Year=2015:2019, Observation=c(123,39,78,52,110), index=Year)
+y
+index(y)
+```
+* tibble 객체를 tsibble객체로 변환
+    * 출력하면 [1M]: 월별 자료임을 표시해줌
+```{r}
+z <- tibble(Month=c('2019 Jan', '2019 Feb', '2019 Mar', '2019 Apr', '2019 May'), Observation = c(50,23,34,30,25))
+z %>%
+  mutate(Month=yearmonth(Month)) %>%
+  as_tsibble(index = Month)
+class(z)
+yearquarter(z$Month)
+yearmonth(z$Month)
+yearweek(z$Month)
+#as_date(z$Month), ymd(z$Month) 는 월별이므로 NA로 처리됨
+```
+
+
+
+
+### The key variable
+* 시계열이 여러개 있으면 key 변수를 이용하여 필요한 시계열만 추출함
+* 예: tsibbledate::olympic_running 올림픽 육상기록 312x4
+
+
+```{r}
+library(tsibbledata)
+class(olympic_running)  
+olympic_running
+index(olympic_running)
+```
+
+### Working with tsibble objects
+* tsibbledata::PBS : 호주 월별 의료버험 약처방 65219x9
+    * a10 : ATC2 == 'A10' : Antidiabetic drup(당뇨병 약) 매출
+    * h02 : ATC2 == 'H02' : Corticosteroid drup(부신피질 호르몬제: 피부질환, 류마티스 등에 쓰임) 매출
+
+
+```{r}
+PBS
+# 키변수 ATC2가 'A10'(당뇨병약)만 추출
+PBS %>%
+  filter(ATC2 == "A10")
+```
+```{r}
+# 키변수 ATC2가 'A10'(당뇨병약)에 대해 월, 양도여부, 지급형태, 비용만 추출
+PBS %>%
+  filter(ATC2 == "A10") %>%
+  select(Month, Concession, Type, Cost)
+```
+* 기술 통계량 : 월별 비용 합계(summarize는 그룹지정이 없으면 인덱스 변수 기준으로 요약함)
+```{r}
+PBS %>%
+  filter(ATC2=='A10') %>%
+  select(Month, Concession, Type, Cost) %>%
+  summarise(TotalC = sum(Cost))
+```
+```{r}
+PBS %>%
+  filter(ATC2=='A10') %>%
+  select(Month, Cost) %>%
+  summarise(TotalC = sum(Cost))
+```
+```{r}
+PBS %>%
+  filter(ATC2=='A10') %>%
+  select(Cost) %>%
+  summarise(TotalC = sum(Cost))
+```
+```{r}
+a10 <- PBS %>%
+  filter(ATC2=='A10') %>%
+  select(Cost) %>%
+  summarise(TotalC = sum(Cost)) %>%
+  mutate(Cost = TotalC/1e6)
+a10
+```
+
+### read_csv/convert to a tsibble
+* prison_population.csv
+```{r}
+# tibble로 읽기. 보통 날짜는 자동으로 처리됨
+prison <- readr::read_csv("https://OTexts.com/fpp3/extrafiles/prison_population.csv")
+```
+```{r}
+prison <- prison %>% 
+  mutate(Quarter = yearquarter(Date)) %>%
+  select(-Date) %>%
+  as_tsibble(key= c(State, Gender, Legal, Indigenous), index=Quarter)
+prison
+```
+
+
+### 2.2 Time plots
+```{r}
+melsyd_economy <- ansett %>%
+  filter(Airports == "MEL-SYD", Class=="Economy")
+melsyd_economy %>%
+  autoplot(Passengers) +
+    labs(title = "Ansett economy class passengers", subtitle = "Melbourne-Sydney") +
+    xlab("Year")
+```
+```{r}
+a10 %>% autoplot(Cost) + 
+  ggtitle("Antidiabetic drug sales") +
+  ylab("$million") + xlab("Year")
+```
+
+### 2.3 Time series patterns
+### 시계열의 4가지 성분
+* 추세성분(Trend)
+* 계절성분(Seasonal)
+* 순환성분(Cyclic)
+* 랜덤성분, 잔여성분(Random,Residual)
+
+### 2.4 Seasonal plots
+```{r}
+library(feasts)
+a10 %>% gg_season(Cost, labels = "both") +
+  ylab("$million")+
+  ggtitle("Seasonal plot : antidiabetic drug sales")
+```
+
+### Multiple seasonal periods
+```{r}
+vic_elec
+```
+```{r}
+vic_elec %>%
+  gg_season(Demand,period = "day") + 
+  theme(legend.position = "none")
+```
+```{r}
+vic_elec
+```
+```{r}
+vic_elec %>%
+  gg_season(Demand,period = "week") + 
+  theme(legend.position = "none")
+```
+
+```{r}
+vic_elec
+```
+```{r}
+vic_elec %>%
+  gg_season(Demand,period = "year") + 
+  theme(legend.position = "none")
+```
+
+### 2.5 Seasonal subseries plots
+```{r}
+a10 %>%
+  gg_subseries(Cost)+
+  ylab("$million") +
+  xlab("Year") +
+  ggtitle("Seasonal subseries plot : antidiabetic drug sales")
+```
+
+### Example: Australian holidya tourism
+### tsibble::tourism
+```{r}
+tourism
+```
+
+```{r}
+holidays <- tourism %>%
+  filter(Purpose == "Holiday") %>%
+  group_by(State) %>%
+  summarise(Trips = sum(Trips))
+holidays
+```
+```{r}
+holidays %>% gg_season(Trips) + 
+  ylab("thousands of trips") +
+  ggtitle("Australian domestic holiday nights")
+```
+```{r}
+holidays %>% gg_subseries(Trips) +
+  ylab("thousands of trips") + 
+  ggtitle("Australian domestic holiday nights")
+```
+
+### 2.6 Scatterplots
+* 다수의 시계열은 산점도로 비교 가능
+* 2014년 빅토리아 30분 간격 전기수요
+```{r}
+library(lubridate)
+```
+
+```{r}
+vic_elec %>%
+  filter(year(Time) == 2014) %>%
+  autoplot(Demand) +
+  xlab("Year: 2014") + ylab(NULL) +
+  ggtitle("Half-hourly electricity demand: Victoria, Australia")
+```
+
+* 2014년 빅토리아 기온
+```{r}
+vic_elec %>%
+  filter(year(Time) == 2014) %>%
+  autoplot(Temperature) +
+  xlab("Year: 2014") + ylab(NULL) +
+  ggtitle("Half-hourly temperatures: Melbourne, Australia")
+```
+
+* 기온과 전기수요:
+  * 기온이 높으면 전기수요도 높은 경향
+  * 기온이 낮으면 전기수요가 높은 경향
+```{r}
+vic_elec %>%
+  filter(year(Time) == 2014) %>%
+  ggplot(aes(x = Temperature, y = Demand)) +
+    geom_point() +
+    ylab("Demand (GW)") + xlab("Temperature (Celsius)")
+```
+
+### Correlation
+### Scatterplot matrices
+
+```{r}
+visitors <- tourism %>%
+  group_by(State) %>%
+  summarise(Trips = sum(Trips))
+visitors
+```
+
+```{r}
+visitors %>%
+  ggplot(aes(x = Quarter, y = Trips)) +
+    geom_line() +
+    facet_grid(vars(State), scales = "free_y") +
+    ylab("Number of visitor nights each quarter (millions)")
+```
+
+```{r}
+library(GGally)
+visitors %>%
+  spread(State,Trips) %>% head()
+
+```
+
+```{r}
+visitors %>%
+  spread(State, Trips) %>%
+  GGally::ggpairs(columns = 2:9)
+```
+
+### 2.7 Lag plots
+```{r}
+recent_production <- aus_production %>%
+  filter(year(Quarter) >= 1992)
+recent_production %>% gg_lag(Beer, geom="point")
+```
+
+### 2.8 ACF(Autocorrelation)
+
+* 자기 상관계수(Autocorelation, ACF, ACF함수): 원시계열과 시차변수간 상관계수
+
+$ r_k = \frac{\sum_{t=k+1}^{T}(y_t-\bar{y})(y_{t-k}-\bar{y})}{\sum_{t=1}^{T}(y_t-\bar{y})^2}$
+
+* 예 : 맥주 생산량 (분기별 자료)
+
+```{r}
+recent_production %>% ACF(Beer, lag_max = 9)
+```
+```{r}
+recent_production %>% ACF(Beer) %>% autoplot()
+```
+
+### Trend and seasonality in ACF
+```{r}
+a10 %>% ACF(Cost, lag_max = 48) %>% autoplot()
+```
+
+### 2.9 White noise
+```{r}
+set.seed(30)
+y <- tsibble(sample = 1:50, wn = rnorm(50), index = sample)
+y %>% autoplot(wn) + ggtitle("White noise")
+```
+```{r}
+y %>% ACF(wn) %>% autoplot()
+```
+
+### 2.10 Exercise
+### 2.11 Further reading
+### 2.12 Appendix
+
+```{r}
+y <- c(4,2,0,1,3)
+print(acf(y, type = 'cov'))
+```
+```{r}
+print(acf(y,type='cor'))
+```
+
+```{r}
+print(acf(y,type='partial'))
+```
+```{r}
+cbind(y, lag(y),lag(y,2), lag(y,3), lag(y,4))
+```
+```{r}
+library(tidyverse)
+cbind(y, lag(y), lag(y,n=2), lag(y,n=3))
+```
+
+```{r}
+cbind(y, lead(y), lead(y,n=2), lead(y, n=3))
+```
+
+* feasts::ACF : 모두 1차부터 계산
+```{r}
+tsb <- tsibble(i=1:5, y=c(4,2,0,1,3), index=i)
+autoplot(tsb,y)
+```
+
+```{r}
+ACF(tsb,y,type='cov')
+ACF(tsb,y,type='cor')
+ACF(tsb,y,type='par')
+```
+```{r}
+PACF(tsb,y)
+tsb %>% gg_lag(y, geom='point')
+```
+```{r}
+tsb %>% ACF(y, lag_max = 4, type='cov') %>% autoplot()
+```
+```{r}
+tsb %>% ACF(y, lag_max = 4) %>% autoplot()
+```
+
+```{r}
+tsb %>% ACF(y, lag_max = 4, type='partial') %>% autoplot()
+```
+
+```{r}
+tsb %>% features(y, ljung_box, lag=4, dof=0)
+```
+
+```{r}
+feasts::gg_tsdisplay(tsb,y,plot='partial')
+```
+
+```{r}
+LDF <- read.csv(textConnection('
+day, a, y
+1, ss, 50
+1, gg, 100
+2, ss, 60
+2, gg, 110
+3, ss, 80
+3, gg, 150'))
+LDF
+```
+```{r}
+tsb <- as_tsibble(LDF, key=a, index=day)
+tsb
+```
+```{r}
+autoplot(tsb)
+filter(tsb, a=='gg')
+filter(tsb, day<3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

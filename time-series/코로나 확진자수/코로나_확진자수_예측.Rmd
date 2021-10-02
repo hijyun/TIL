@@ -1,0 +1,385 @@
+---
+title: "코로나 확진자수 예측"
+author: "20160131 김지현"
+date: '2020 12 15 '
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+    theme: yeti
+    highlight: kate
+    toc: true
+    toc_float: true
+    toc_depth: 3
+
+---
+# 코로나 확진자수 예측
+## 자료읽기
+
+```{r include=FALSE}
+library(tidyverse)
+library(fpp3)
+library(gridExtra)
+```
+
+```{r include=FALSE}
+setwd('C:/Users/JIHYUN/Desktop/수업/통계학특강/3차과제')
+```
+
+```{r}
+origianl_TSB  <- read_csv('data/kr_daily.csv')
+
+```
+
+
+* 자료중 날짜와 confirmed(확진자수)만 사용 
+
+```{r}
+library(lubridate)
+TSB <- origianl_TSB  %>% 
+    mutate(ymd=ymd(date)) %>%
+    select(ymd,confirmed)
+TSB <- as_tsibble(TSB,index=ymd)
+```
+
+```{r}
+head(TSB)
+```
+
+
+## 분할
+* 2020/11/30까지의 확진자를 TRN으로 설정
+```{r}
+TRN <- filter_index(TSB, .~'2020-11-30')
+TST <- filter_index(TSB, '2020-12-01'~.)
+```
+
+## 탐색
+```{r}
+autoplot(TSB)
+```
+
+
+```{r}
+gg_tsdisplay(TSB,TSB$confirmed,plot_type = 'partial')
+```
+
+acf가 천천히 감소하는 비정상 시계열의 특징을 보인다.
+계절성은 없는 것으로 보이며 추세가 있는 것으로 보인다.
+```{r}
+autoplot(TSB) + geom_point() + geom_smooth(method = 'lm')
+```
+
+## 모형
+
+###  ETS: 최적모형을 탐색하고, AICc로 최종모형을 결정
+
+* 모형적합
+
+
+```{r}
+MM <- model(TRN,
+ # ETS 자동선택
+ ETS = ETS(log(confirmed)),
+ # ETS(E=A, T=A, S=N) = Holt Linear
+ AAN = ETS(log(confirmed)~error('A')+trend('A')+season('N')),
+ #ETS(E=A,T=ad,S=N) = Holt
+ ADN = ETS(log(confirmed)~error('A')+trend('Ad') + season('N')))
+```
+
+
+* TRN에서 모형적합도 비교
+    * TRN에서 MAPE 기준 ADN=2.26 < ETS=2.44 = AAN=2.44 
+    * ALCC 기준 AAN=283.=ETS = 283. < ADN=290. 
+    
+```{r}
+accuracy(MM)
+```
+
+
+```{r}
+glance(MM)
+
+```
+
+
+* 적합값 저장/잔차 분석 
+
+```{r}
+AA <- augment(MM)
+# ETS(자동선택) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ETS"), .resid, plot_type = 'partial') + ggtitle(
+'ETS')
+```
+
+
+```{r}
+# ETS(A,A,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="AAN"), .resid, plot_type = 'partial') + ggtitle(
+'AAN')
+```
+
+
+```{r}
+## ETS(A,Ad,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ADN"), .resid, plot_type = 'partial') + ggtitle(
+'ADN')
+```
+
+* 예측값 저장(TST)/ 모형평가
+```{r}
+FF <- forecast(MM,new_data=TST)
+accuracy(FF, data=TSB)
+autoplot(FF, data=TSB, level = NULL)
+```
+
+
+
+
+* 개별모형 검토
+```{r}
+# 개별모형 검토
+# ETS의 과거값, 적합값, 예측값 시각화
+METS <- select(MM, ETS)
+report(METS)
+```
+
+```{r}
+features(filter(AA, .model=='ETS'), .resid, ljung_box, lag=10, dof=2)
+
+G1 <- autoplot(filter(FF, .model=='ETS'),data=TSB)+
+ geom_line(aes(y=.fitted, color='Fitted'), data = filter(AA, .model=='ETS')) + ggtitle('ETS')
+```
+
+p-value가 $\alpha=0.05$보다 작으므로 잔차는 백색잡음이 아니다.
+
+
+```{r}
+MAAN <- select(MM, AAN)
+report(MAAN)
+```
+
+```{r}
+features(filter(AA, .model=='AAN'), .resid, ljung_box, lag=10, dof=2)
+G2 <- autoplot(filter(FF, .model=='AAN'),data=TSB)+
+ geom_line(aes(y=.fitted, color='Fitted'), data =filter(AA, .model=='AAN')) + ggtitle('ETS(AAN)')
+
+```
+p-value가 $\alpha=0.05$보다 작으므로 잔차는 백색잡음이 아니다.
+
+```{r}
+# ADN의 과거값, 적합값, 예측값 시각화
+MADN <- select(MM, ADN)
+report(MADN)
+```
+
+```{r}
+features(filter(AA, .model=='ADN'), .resid, ljung_box, lag=10, dof=3)
+
+G3 <- autoplot(filter(FF, .model=='ADN'), data=TSB)+geom_line(aes(y=.fitted, color='Fitted'), data=filter(AA,.model=='ADN'))+ggtitle('ETS(ADN)')
+```
+p-value가 $\alpha=0.05$보다 작으므로 잔차는 백색잡음이 아니다.
+
+
+
+```{r}
+gridExtra::grid.arrange(G1,G2,G3, nrow=3)
+```
+
+```{r}
+# 예측값 확인
+cbind(
+ tail(TSB)[,c('ymd','confirmed')],
+ ADN = tail(filter(FF,.model=='ADN')$.mean),
+ ETS = tail(filter(FF,.model=='ETS')$.mean),
+ AAN = tail(filter(FF,.model=='AAN')$.mean))
+```
+
+
+* 최종모형
+AICc=2.44인 자동선택모형 ETS로 결정
+
+
+### ARIMA: 최적모형을 탐색하고, AICc로 최종모형을 결정
+계절성이 존재하지 않음
+
+
+```{r paged.print=TRUE}
+features(TSB, log(confirmed), unitroot_ndiffs)
+```
+
+최적의 차분차수는 d=2이다.
+
+```{r}
+gg_tsdisplay(TSB,difference(log(confirmed), differences = 2),plot_type = 'partial')
+```
+
+acf가 지수적으로 감소하고, pacf가 절단퇸 형태로 q=2로 보겠다.
+
+```{r}
+MM <- model(TRN,
+ # 자동선택
+  MAUTO = ARIMA(log(confirmed)),
+ M022000 = ARIMA(log(confirmed)~pdq(0,2,2)+PDQ(0,0,0)),
+ M102000 = ARIMA(log(confirmed)~pdq(1,0,2)+PDQ(2,0,1)+1))
+```
+
+* TRN에서 모형적합도 비교
+    * TRN에서 MAPE 기준 M022000=2.35  < MAUTO= 2.46 = M102000=2.46
+    * ALCC 기준 MAUTO=-650.< M022000 = -633. <  M102000= -573.
+
+```{r}
+glance(MM)
+accuracy(MM)
+```
+
+
+* 적합값 저장/잔차 분석
+```{r}
+#MAUTO
+MAUTO <- select(MM, MAUTO)
+gg_tsresiduals(MAUTO) 
+```
+
+
+```{r}
+AAUTO <- augment(MAUTO)
+features(AAUTO, .resid, ljung_box, lag=24, dof=1+2+2+2+0+1+7)
+```
+
+p-value가 $\alpha=0.05$보다 작으므로 잔차는 백색잡음이 아니다.
+
+
+```{r}
+report(MAUTO)
+```
+
+```{r}
+gg_arma(MAUTO)
+```
+
+점이 모두 단위원 안에 있으로 정상이고 가역이다.
+
+```{r}
+FAUTO <- forecast(MAUTO,new_data = TST )
+G4 <- autoplot(filter(FAUTO, .model=='MAUTO'),data=TSB)+
+ geom_line(aes(y=.fitted, color='Fitted'), data =filter(AAUTO, .model=='MAUTO')) + ggtitle('ARIMA(1,2,2)(2,0,1)+7')
+
+```
+
+
+```{r}
+G4
+```
+
+
+```{r}
+# M022000
+MM022000 <- select(MM, M022000)
+gg_tsresiduals(MM022000) 
+AM022000 <- augment(MM022000)
+report(MM022000)
+
+
+```
+
+```{r}
+features(AM022000, .resid, ljung_box, lag=24, dof=4)
+```
+p-value가 $\alpha$=0.05보다 작으므로 잔차는 백색잡음이 아니다.
+
+
+```{r}
+gg_arma(MM022000)
+```
+점이 모두 단위원 안에 있으므로 정상AR이다.
+
+```{r}
+FM022000 <- forecast(MM022000,new_data = TST )
+G5 <- autoplot(filter(FM022000, .model=='M022000'),data=TSB)+
+ geom_line(aes(y=.fitted, color='Fitted'), data =filter(AM022000, .model=='M022000')) + ggtitle('ARIMA(0,2,2)(0,0,0)')
+G5
+```
+
+
+
+```{r}
+# M102000
+MM102000 <- select(MM, M102000)
+gg_tsresiduals(MM102000) 
+AM102000 <- augment(MM102000)
+report(MM102000)
+```
+
+```{r}
+features(AM102000, .resid, ljung_box, lag=24, dof=4)
+```
+p-value가 $\alpha$=0.05보다 작으므로 잔차는 백색잡음이 아니다.
+
+
+```{r}
+gg_arma(MM102000)
+```
+점이 모두 단위원 안에 있으므로 정상AR, 가역MR이다.
+
+```{r}
+FM102000 <- forecast(MM102000,new_data = TST )
+G6 <- autoplot(filter(FM102000, .model=='M102000'),data=TSB)+
+ geom_line(aes(y=.fitted, color='Fitted'), data =filter(AM102000, .model=='M102000')) + ggtitle('ARIMA(1,0,2)(0,0,0)+1')
+G6
+```
+
+
+* 최종모형 
+
+AICc=-650.인 자동선택모형 MAUTO로 결정
+
+##  2020.12.1~2020.12.15까지 확진자수 예측값과 예측그림
+
+
+
+```{r}
+cbind(
+ tail(TSB,n=15)[,c('ymd','confirmed')],
+ ADN = tail(filter(FF,.model=='ADN')$.mean,n=15),
+ ETS = tail(filter(FF,.model=='ETS')$.mean,n=15),
+ AAN = tail(filter(FF,.model=='AAN')$.mean,n=15),
+ MAUTO= tail(filter(FAUTO,.model=='MAUTO')$.mean,n=15),
+ MM022000= tail(filter(FM022000,.model=='M022000')$.mean,n=15),
+ MM102000= tail(filter(FM102000,.model=='M102000')$.mean,n=15))
+```
+
+
+
+```{r}
+MM <- model(TRN,
+ # ETS 자동선택
+ ETS = ETS(log(confirmed)),
+ # ETS(E=A, T=A, S=N) = Holt Linear
+ AAN = ETS(log(confirmed)~error('A')+trend('A')+season('N')),
+ #ETS(E=A,T=ad,S=N) = Holt
+ ADN = ETS(log(confirmed)~error('A')+trend('Ad') + season('N')),
+ # 자동선택
+  MAUTO = ARIMA(log(confirmed)),
+ M022000 = ARIMA(log(confirmed)~pdq(0,2,2)+PDQ(0,0,0)),
+ M102000 = ARIMA(log(confirmed)~pdq(1,0,2)+PDQ(2,0,1)+1))
+```
+
+```{r}
+TST15 <- filter_index(TSB, '2020-12-01'~'2020-12-15')
+FF <- forecast(MM , new_data=TST15)
+autoplot(FF, data=TST15, level=NULL)
+```
+
+## ETS모형과 ARIMA모형을 비교
+```{r}
+gridExtra::grid.arrange(G1,G2,G3,G4,G5,G6, nrow=3)
+glance(MM)
+```
+
+AICc기준
+MAUTO=-650.< M022000 = -633. < M102000= -573.
+< AAN=283.=ETS = 283. < ADN=290.
+이므로
+ARIMA모형이 더 우수한 것으로 보인다.

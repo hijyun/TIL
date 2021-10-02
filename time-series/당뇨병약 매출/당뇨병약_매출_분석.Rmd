@@ -1,0 +1,225 @@
+---
+title: "당뇨병약 매출 분석"
+author: "20160131 김지현"
+date: '2020 11 11 '
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+    theme: yeti
+    highlight: kate
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+## 자료읽기
+
+* tsibbledata::PBS: 호주 월별 의료보험 약처방 65219x9
+   * a10: ATC2=='A10' : Antidiabetic drug(당뇨병 약) 매출 
+   * h02: ATC2=='H02' : Corticosteroid drug(부신피질 호르몬제:피부질환, 류마티스 등에 쓰임) 매출
+   
+역할|변수
+----|----
+index|Month [1M] 1991.7 ~ 2008.6 
+key|Concession{Concession, General} 
+&nbsp;|Type{Co-payments, Safty net}
+&nbsp;|ATC1{..}
+&nbsp;|ATC2{..}
+obs|Script 월별 처방건수
+&nbsp;|Cost 월별 처방비용(매출)
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(fpp3)
+library(gridExtra)
+```
+
+```{r include=FALSE}
+setwd('C:/Users/JIHYUN/Desktop/수업/통계학특강/3차과제')
+```
+
+
+```{r}
+a10 <- PBS %>%
+  filter(ATC2=="A10") %>%
+  select(Month, Concession, Type, Cost) %>%
+  summarise(TotalC = sum(Cost)) %>%
+  mutate(Cost = TotalC/1e6)   %>%        # Cost의 단위를 백만단위로 변경
+  select(Month, Cost)
+a10
+```
+
+
+```{r}
+TRN <- filter_index(a10, .~'2000 12')
+TST <- filter_index(a10, '2001 1'~.)
+```
+
+## 탐색/분할
+### 시계열 그림
+* 결정척 추세가 있고, 분산이 증가하여 이분산이고, 계절성이 존재하므로 비정상 시계열로보인다.
+* 당뇨병 매출액은 연초에 가장 높으며 강한 계절성을 가지고 있다.
+```{r}
+a10 %>%
+  autoplot(Cost) +
+  ylab("Cost(1e6)" )+
+  labs(title="monthly Cost of Antidiabetic drug")+
+  xlab("year month")
+```
+
+* 계절성 시각화 (gg_series, gg_subseries)
+* 1월에 가장 매출이 높은 계절성을 가지고있다.
+```{r}
+a10 %>% gg_season(Cost, labels = "left")+
+  ylab("Cost(1e6)")+
+  xlab("month")+
+  ggtitle("Seasonal plot : monthly Cost of Antidiabetic drug")
+```
+
+```{r}
+a10 %>%
+  gg_subseries(Cost) +
+  ylab("Cost(1e6)")+
+  xlab("month")+
+  ggtitle("Seasonal plot : monthly Cost of Antidiabetic drug")
+```
+
+
+* acf그림에서 자기상관이 사라지지 않는 비정상 시계열의 특징을 보인다.
+```{r}
+gg_tsdisplay(a10, Cost, plot_type = 'partial')
+```
+
+```{r}
+autoplot(a10, Cost)+geom_point() +geom_smooth(method='lm')
+```
+
+## 모형
+### 모형 적합
+-  시계열 회귀(결정적 추세모형)을 적합
+-  시계열 회귀(결정적 추세 + 계절가변수)을 적합
+
+```{r}
+MM <- model(TRN,
+            LLT = TSLM(log(Cost)~trend()),
+            LLTS = TSLM(log(Cost)~trend()+season()))
+report(MM)
+```
+
+### TRN에서 모형적합도 비교
+    * TRN에서 MAPE 기준 LLTS=4.01 < LLT=11.3 
+    * ALCc 기준 LLTS = -645.2379 < LLT = -423.3805
+    * TRN에서의 성능은 MAPE가 낮은 LLTS가 좋다.
+```{r}
+accuracy(MM)
+```
+
+```{r}
+glance(MM)
+```
+
+```{r}
+glance(MM)$AICc
+```
+
+### 적합값 저장/잔차분석
+* LLT의 잔차가 패턴을 가지는 것으로 보아 잔차안에 정보가 남아있는 것으로 보인다.
+```{r}
+AA <- augment(MM)
+
+# LLT (결정적 추세모형) 잔차 잔차분석
+gg_tsdisplay(filter(AA, .model=='LLT'), .resid, plot_type = 'partial')+ggtitle('LLT')
+```
+
+```{r}
+# LLTS (결정적 추세 + 계절가변수) 잔차분석
+gg_tsdisplay(filter(AA, .model=='LLTS'), .resid, plot_type = 'partial')+ggtitle('LLTS')
+```
+
+
+    * 1만 간격으로 잔차가 등분산인 것으로 보인다.
+    * 잔차안에 정보가 남아있는지 개별모형검토 과정에서 검정으로 확인해봐야한다.
+    
+    
+* 예측값 저장
+```{r}
+FF <- forecast(MM, new_data = TST)
+```
+
+### TST에서 모형 적합도 비교
+    * TRN에서 MAPE 기준 LLTS=1.82 < LLT=2.97
+    * TST에서의 성능도 LLTS가 더 좋다.
+```{r}
+accuracy(FF, data=a10)
+```
+
+
+
+### 예측값 시각화/개별모형 검토
+```{r}
+autoplot(FF, data=a10, level=NULL)
+```
+
+
+```{r}
+# 개별모형 검토
+# LLT 의 과거값, 적합값, 예측값 시각화
+MLLT <- select(MM, LLT)
+report(MLLT)
+```
+
+  * $p-value=0.000000822<\alpha=0.05$이므로 $H_0:\rho_1=...=\rho_10=0$을 기각, 자기상관이 남아있는 것으로 보인다.
+
+```{r}
+#gg_tsresiduals(LLT) : 위의 결과와 동일
+features(filter(AA, .model=='LLT'),.resid,ljung_box, lag=10, dof=2)
+```
+
+
+```{r}
+G1 <- autoplot(filter(FF, .model=='LLT'), data=a10)+ geom_line(aes(y=.fitted, color='Fitted'),data=filter(AA, .model=='LLT'))+ggtitle('LLT')
+```
+
+```{r}
+# LLTS 의 과거값, 적합값, 예측값 시각화
+MLLTS <- select(MM, LLTS)
+report(MLLTS)
+```
+
+  * $p-value=0.225>\alpha=0.05$이므로 $H_0:\rho_1=...=\rho_10=0$을 채택, 잔차가 백삭잡음 이고, 모형이 성공적인 것으로 보인다.
+  
+```{r}
+#gg_tsresiduals(LLTS) : 위의 결과와 동일
+features(filter(AA, .model=='LLTS'),.resid,ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G2 <- autoplot(filter(FF, .model=='LLTS'), data=a10)+ geom_line(aes(y=.fitted, color='Fitted'),data=filter(AA, .model=='LLTS'))+ggtitle('LLTS')
+```
+
+
+```{r}
+gridExtra::grid.arrange(G1,G2)
+```
+
+
+```{r}
+# 예측값 확인
+cbind(
+  tail(a10)[,c('Month','Cost')],
+  LLT = tail(filter(FF,.model=='LLT')$.mean),
+  LLTS = tail(filter(FF,.model=='LLTS')$.mean))
+```
+
+### 최종모형 - LLTS (결정적 추세 + 계절가변수)
+* 최종모형을 TST에서 MAPE가 낮고, 잔차가 백색잡음인 LLTS(결정적 추세 + 계절가변수)로 결정.
+```{r}
+MLLTS <-model(TRN, LLTS = TSLM(log(Cost)~trend()+season()))
+```
+
+
+
+

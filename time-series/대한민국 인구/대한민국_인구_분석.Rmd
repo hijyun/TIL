@@ -1,0 +1,420 @@
+---
+title: "대한민국 인구 분석"
+author: "20160131 김지현"
+date: '2020 11 10 '
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+    theme: yeti
+    highlight: kate
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+# 여자 인구 분석
+## 자료읽기
+* 1960~2017 :통계청 성별 인구추계 자료
+    * 2017까지만 실제데이터
+* 2018-2019 :인구주택총조사 자료
+```{r include=FALSE}
+library(tidyverse)
+library(fpp3)
+library(gridExtra)
+```
+
+```{r include=FALSE}
+setwd('C:/Users/JIHYUN/Desktop/수업/통계학특강/3차과제')
+```
+
+```{r}
+origianl_TSB  <- read_csv('data/krpop_MF.csv')
+origianl_TSB  <- pivot_longer(origianl_TSB , 
+                    cols = c(-yy,male,female),
+                    names_to ='sex',
+                    values_to = 'y')
+TSB <- origianl_TSB  %>% 
+    filter(sex == 'female') %>%
+    select(yy,y)
+```
+
+
+
+```{r}
+tail(TSB)
+```
+
+```{r}
+TSB <- mutate(TSB, y=y/10000)
+#TSB <- mutate(TSB, y=y/10000, lin=1:length(y), quad=lin^2)
+TSB <- as_tsibble(TSB,index=yy)
+```
+
+
+## 탐색/분할
+* 시계열 그림1
+```{r}
+autoplot(TSB)
+gg_tsdisplay(TSB,y,plot_type = 'partial')
+```
+
+* 시계열그림2
+```{r}
+TRN <- filter_index(TSB, .~2000)
+TST <- filter_index(TSB, 2001~.)
+autoplot(TSB) + geom_point() + geom_smooth(method = 'lm')
+```
+
+## 모형
+* 모형적합
+```{r}
+# 한꺼번에 하기 1: 기본모형만
+MM <- model(TRN,
+            # ETS 자동선택
+            ETS = ETS(log(y)),
+            # ETS(E=A, T=A, S=N) = Holt Linear
+            AAN = ETS(log(y)~error('A')+trend('A')+season('N')),
+            #ETS(E=A,T=ad,S=N) = Holt
+            ADN = ETS(log(y)~error('A')+trend('Ad', phi=0.9) + season('N')),
+            LLT = TSLM(log(y)~trend()),
+            LLTK = TSLM(log(y)~trend(knots=c(1990))))
+            #(생략)LQT = TSLM(log(y)~lin+quad)
+```
+
+* TRN에서 모형적합도 비교
+    * TRN에서 MAPE 기준 AAN=0.065 < ETS=0.066 < ADN=0.117 < LLTK = 1.91 < LLT=2.92
+    * ALCC 기준 ETS=-410 < AAN=-408 < ADN=-383 < LLTK=-303 < LLT=-272
+```{r}
+accuracy(MM)
+glance(MM)
+```
+
+* 적합값 저장/잔차 분석
+```{r}
+AA <- augment(MM)
+
+# ETS(자동선택) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ETS"), .resid, plot_type = 'partial') + ggtitle('ETS')
+```
+
+```{r}
+# ETS(A,A,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="AAN"), .resid, plot_type = 'partial') + ggtitle('AAN')
+```
+
+```{r}
+## ETS(A,Ad,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ADN"), .resid, plot_type = 'partial') + ggtitle('ADN')
+```
+
+```{r}
+# LLTK 잔차분석
+gg_tsdisplay(filter(AA, .model=="LLTK"), .resid, plot_type = 'partial') + ggtitle('LLTK')
+```
+
+```{r}
+# LLT 잔차분석
+gg_tsdisplay(filter(AA, .model=="LLT"), .resid, plot_type = 'partial') + ggtitle('LLT')
+```
+
+* 예측값 저장(TST)/ 모형평가(반드시 TST로 지정해야함)
+```{r}
+FF <- forecast(MM, h=19)
+# FF <- forecast(MM,new_data=TST)
+accuracy(FF, data=TSB)
+
+```
+
+* 예측값 시각화/ 개별모형 검토
+```{r}
+# 과거값, 예측값을 한번에 찍는 방법
+autoplot(FF, data=TSB, level = NULL)
+```
+
+```{r}
+# 과거값, 적합값, 예측값을 한번에 찍는 방법(불안정)
+autoplot(FF, TSB, level = NULL) +
+  geom_line(aes(y=.fitted, color='Fitted'), data=AA)
+```
+
+```{r}
+# 개별모형 검토
+# ETS의 과거값, 적합값, 예측값 시각화
+METS <- select(MM, ETS)
+report(METS)
+```
+
+```{r}
+# gg_tsresiduals(ETS) : 위 결과와 동일
+features(filter(AA, .model=='ETS'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G1 <- autoplot(filter(FF, .model=='ETS'),data=TSB)+
+  geom_line(aes(y=.fitted, color='Fitted'), data = filter(AA, .model=='ETS')) + ggtitle('ETS')
+
+# AAN의 과거값, 적합값, 예측값 시각화
+MAAN <- select(MM, AAN)
+report(MAAN)
+```
+
+
+```{r}
+# gg_tsresiduals(MAAN) : 위 결과와 동일
+features(filter(AA, .model=='AAN'), .resid, ljung_box, lag=10, dof=2)
+```
+
+```{r}
+G2 <- autoplot(filter(FF, .model=='AAN'),data=TSB)+
+  geom_line(aes(y=.fitted, color='Fitted'), data =filter(AA, .model=='AAN')) + ggtitle('ETS(AAN)')
+
+# ADN의 과거값, 적합값, 예측값 시각화
+MADN <- select(MM, ADN)
+report(MADN)
+```
+
+```{r}
+# gg_tsresiduals(MADN) : 위 결과와 동일
+features(filter(AA, .model=='ADN'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G3 <- autoplot(filter(FF, .model=='ADN'), data=TSB)+geom_line(aes(y=.fitted, color='Fitted'), data=filter(AA, .model=='ADN'))+ggtitle('ETS(ADN)')
+
+# LLT의 과거값, 적합값, 예측값 시각화
+MLLT <- select(MM, LLT)
+report(MLLT)
+```
+
+```{r}
+# gg_tsresiduals(MLLT) : 위 결과와 동임
+features(filter(AA, .model=='LLT'),  .resid, ljung_box, lag=10, dof=2)
+```
+
+```{r}
+G4 <- autoplot(filter(FF, .model=='LLT'), data=TSB)+ geom_line(aes(y=.fitted ,color='Fitted'), data=filter(AA, .model=='LLT'))+ggtitle('LLT:Linear Trend')
+
+# LLTK의 과거값, 적합값, 예측값 시각화
+MLLTK <-select(MM, LLTK)
+report(MLLTK)
+```
+
+```{r}
+# gg_tsresiduals(MLLTK) : 위 결과와 동일
+features(filter(AA, .model=='LLTK'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G5 <- autoplot(filter(FF, .model=='LLTK'), data=TSB)+geom_line(aes(y=.fitted,color='Fitted'), data=filter(AA, .model=='LLTK'))+ ggtitle('LLTK:Linear Trend with Knots')
+```
+
+```{r}
+gridExtra::grid.arrange(G1,G2,G3,G4,G5, nrow=3)
+```
+
+```{r}
+# 예측값 확인
+cbind(
+  tail(TSB)[,c('yy','y')],
+  ADN = tail(filter(FF,.model=='ADN')$.mean),
+  ETS = tail(filter(FF,.model=='ETS')$.mean),
+  LLTK= tail(filter(FF,.model=='LLTK')$.mean),
+  AAN = tail(filter(FF,.model=='AAN')$.mean),
+  LLT = tail(filter(FF,.model=='LLT')$.mean))
+```
+
+# 남자 인구 분석
+## 자료읽기
+```{r}
+TSB <- origianl_TSB  %>% 
+    filter(sex == 'male') %>%
+    select(yy,y)
+```
+
+
+```{r}
+tail(TSB)
+```
+
+```{r}
+TSB <- mutate(TSB, y=y/10000)
+#TSB <- mutate(TSB, y=y/10000, lin=1:length(y), quad=lin^2)
+TSB <- as_tsibble(TSB,index=yy)
+```
+
+
+## 탐색/분할
+* 시계열 그림1
+```{r}
+autoplot(TSB)
+gg_tsdisplay(TSB,y,plot_type = 'partial')
+```
+
+* 시계열그림2
+```{r}
+TRN <- filter_index(TSB, .~2000)
+TST <- filter_index(TSB, 2001~.)
+autoplot(TSB) + geom_point() + geom_smooth(method = 'lm')
+```
+
+## 모형
+* 모형적합
+```{r}
+# 한꺼번에 하기 1: 기본모형만
+MM <- model(TRN,
+            # ETS 자동선택
+            ETS = ETS(log(y)),
+            # ETS(E=A, T=A, S=N) = Holt Linear
+            AAN = ETS(log(y)~error('A')+trend('A')+season('N')),
+            #ETS(E=A,T=ad,S=N) = Holt
+            ADN = ETS(log(y)~error('A')+trend('Ad', phi=0.9) + season('N')),
+            LLT = TSLM(log(y)~trend()),
+            LLTK = TSLM(log(y)~trend(knots=c(1990))))
+            #(생략)LQT = TSLM(log(y)~lin+quad)
+```
+
+* TRN에서 모형적합도 비교
+    * TRN에서 MAPE 기준 AAN=0.065 < ETS=0.066 < ADN=0.117 < LLTK = 1.91 < LLT=2.92
+    * ALCc 기준 ETS=-410 < AAN=-408 < ADN=-383 < LLTK=-303 < LLT=-272
+```{r}
+accuracy(MM)
+glance(MM)
+```
+
+* 적합값 저장/잔차 분석
+```{r}
+AA <- augment(MM)
+
+# ETS(자동선택) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ETS"), .resid, plot_type = 'partial') + ggtitle('ETS')
+```
+
+```{r}
+# ETS(A,A,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="AAN"), .resid, plot_type = 'partial') + ggtitle('AAN')
+```
+
+```{r}
+## ETS(A,Ad,N) 잔차분석
+gg_tsdisplay(filter(AA, .model=="ADN"), .resid, plot_type = 'partial') + ggtitle('ADN')
+```
+
+```{r}
+# LLTK 잔차분석
+gg_tsdisplay(filter(AA, .model=="LLTK"), .resid, plot_type = 'partial') + ggtitle('LLTK')
+```
+
+```{r}
+# LLT 잔차분석
+gg_tsdisplay(filter(AA, .model=="LLT"), .resid, plot_type = 'partial') + ggtitle('LLT')
+```
+
+* 예측값 저장(TST)/ 모형평가(반드시 TST로 지정해야함)
+```{r}
+FF <- forecast(MM, h=19)
+# FF <- forecast(MM,new_data=TST)
+accuracy(FF, data=TSB)
+
+```
+
+* 예측값 시각화/ 개별모형 검토
+```{r}
+# 과거값, 예측값을 한번에 찍는 방법
+autoplot(FF, data=TSB, level = NULL)
+```
+
+```{r}
+# 과거값, 적합값, 예측값을 한번에 찍는 방법(불안정)
+autoplot(FF, TSB, level = NULL) +
+  geom_line(aes(y=.fitted, color='Fitted'), data=AA)
+```
+
+```{r}
+# 개별모형 검토
+# ETS의 과거값, 적합값, 예측값 시각화
+METS <- select(MM, ETS)
+report(METS)
+```
+
+```{r}
+# gg_tsresiduals(ETS) : 위 결과와 동일
+features(filter(AA, .model=='ETS'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G1 <- autoplot(filter(FF, .model=='ETS'),data=TSB)+
+  geom_line(aes(y=.fitted, color='Fitted'), data = filter(AA, .model=='ETS')) + ggtitle('ETS')
+
+# AAN의 과거값, 적합값, 예측값 시각화
+MAAN <- select(MM, AAN)
+report(MAAN)
+```
+
+
+```{r}
+# gg_tsresiduals(MAAN) : 위 결과와 동일
+features(filter(AA, .model=='AAN'), .resid, ljung_box, lag=10, dof=2)
+```
+
+```{r}
+G2 <- autoplot(filter(FF, .model=='AAN'),data=TSB)+
+  geom_line(aes(y=.fitted, color='Fitted'), data =filter(AA, .model=='AAN')) + ggtitle('ETS(AAN)')
+
+# ADN의 과거값, 적합값, 예측값 시각화
+MADN <- select(MM, ADN)
+report(MADN)
+```
+
+```{r}
+# gg_tsresiduals(MADN) : 위 결과와 동일
+features(filter(AA, .model=='ADN'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G3 <- autoplot(filter(FF, .model=='ADN'), data=TSB)+geom_line(aes(y=.fitted, color='Fitted'), data=filter(AA, .model=='ADN'))+ggtitle('ETS(ADN)')
+
+# LLT의 과거값, 적합값, 예측값 시각화
+MLLT <- select(MM, LLT)
+report(MLLT)
+```
+
+```{r}
+# gg_tsresiduals(MLLT) : 위 결과와 동임
+features(filter(AA, .model=='LLT'),  .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G4 <- autoplot(filter(FF, .model=='LLT'), data=TSB)+ geom_line(aes(y=.fitted ,color='Fitted'), data=filter(AA, .model=='LLT'))+ggtitle('LLT:Linear Trend')
+
+# LLTK의 과거값, 적합값, 예측값 시각화
+MLLTK <-select(MM, LLTK)
+report(MLLTK)
+```
+
+```{r}
+# gg_tsresiduals(MLLTK) : 위 결과와 동일
+features(filter(AA, .model=='LLTK'), .resid, ljung_box, lag=10, dof=3)
+```
+
+```{r}
+G5 <- autoplot(filter(FF, .model=='LLTK'), data=TSB)+geom_line(aes(y=.fitted,color='Fitted'), data=filter(AA, .model=='LLTK'))+ ggtitle('LLTK:Linear Trend with Knots')
+```
+
+```{r}
+gridExtra::grid.arrange(G1,G2,G3,G4,G5, nrow=3)
+```
+
+```{r}
+# 예측값 확인
+cbind(
+  tail(TSB)[,c('yy','y')],
+  ADN = tail(filter(FF,.model=='ADN')$.mean),
+  ETS = tail(filter(FF,.model=='ETS')$.mean),
+  LLTK= tail(filter(FF,.model=='LLTK')$.mean),
+  AAN = tail(filter(FF,.model=='AAN')$.mean),
+  LLT = tail(filter(FF,.model=='LLT')$.mean))
+```
+
+
+

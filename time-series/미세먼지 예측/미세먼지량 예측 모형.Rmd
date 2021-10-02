@@ -1,0 +1,351 @@
+---
+title: "미세먼지량 예측 모형"
+author: "20160131 김지현"
+date: '2020 10 25 '
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+    theme: yeti
+    highlight: kate
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+```{r}
+library(tidyverse)
+library(tsibble)
+library(fpp3)
+```
+```{r}
+setwd('C:/Users/JIHYUN/Desktop/수업/통계학특강/2차과제')
+```
+
+
+# 8개 도시 월별 미세먼지 측정량
+## 데이터 전처리
+* tot는 제거
+```{r}
+pm10w <- readr::read_csv('PM10w.csv') %>%
+            select(-tot)
+
+head(pm10w)
+```
+
+### 결측확인
+```{r}
+colSums(is.na(pm10w))
+```
+
+```{r}
+pm10w$sejong[is.na(pm10w$sejong)]
+```
+
+
+
+### WDF를  LDF로 변환
+```{r}
+pm10w <- pivot_longer(pm10w,
+             col = c(-yymm,seoul,busan,incheon,
+                     gwangju,daejeon,ulsan,sejong),
+             names_to = 'city',
+             values_to = 'y')
+pm10w
+```
+
+
+### tisbble로 변환
+* yymm칼럼의 데이터형을 시간형태로 변환
+```{r}
+pm10w <- pm10w %>%
+  mutate(yymm = yearmonth(yymm)) %>% 
+  as_tsibble(key=city,index= yymm)
+pm10w
+```
+
+## 데이터 탐색
+### 기초 통계량
+* na.rm=T -> 결측 대체하고 계산
+
+#### 연별 미세먼지 평균
+```{r}
+pm10w %>% 
+  index_by(Year=year(yymm))%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+
+```
+
+#### 분기별 미세먼지 평균
+```{r}
+pm10w %>% 
+  index_by(Quarter=quarter(yymm))%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+```
+
+#### 월별 미세먼지 평균
+```{r}
+pm10w %>% 
+  index_by(Month=month(yymm))%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+```
+
+
+#### 도시별 연평균 미세먼지 측정량
+```{r}
+yyfd <- pm10w %>% 
+  index_by(Year=year(yymm))%>%
+  group_by(city)%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+yyfd
+```
+
+#### 도시별 월평균 미세먼지 측정량
+```{r}
+mmfd <- pm10w %>% 
+  index_by(Month=month(yymm))%>%
+  group_by(city)%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+mmfd
+```
+
+#### 도시별 분기별 미세먼지 측정량
+```{r}
+qqfd <- pm10w %>% 
+  index_by(quarter=quarter(yymm))%>%
+  group_by(city)%>%
+  summarize(n=n(),my=mean(y, na.rm= T))
+qqfd
+```
+
+
+## 시계열 그림
+* 추세가 없고 등분산이지만 계절성이 있어 비정상 시계열로보인다.
+```{r}
+pm10w %>%
+  autoplot(y) +
+  ylab("finedust(㎍/m³)") +
+  labs(title="monthly finedust measured quantity of 8 city")+
+  xlab("year month")
+```
+
+## 계절성 그림 (gg_series, gg_subseries)
+```{r}
+pm10w %>% gg_season(y, labels = "left")+
+  ylab("finedust(㎍/m³)")+
+  xlab("month")+
+  ggtitle("Seasonal plot : finedust measured quantity of 8 city")
+```
+
+```{r}
+pm10w %>%
+  gg_subseries(y) +
+  ylab("finedust(㎍/m³)") +
+  xlab("month")+
+  ggtitle("Seasonal subseries plot : finedust measured quantity of 8 city")
+```
+
+## ACF의 특징 기술
+* 계절성이있는 비정상 시계열의 acf모양인 scalloped pattern을 보인다.
+```{r}
+pm10w %>% ACF(y, lag_max=12)
+```
+
+```{r}
+autoplot(ACF(pm10w,y,type='cor'))
+```
+
+## Ljung-Box 검정
+
+* p-value가 $\alpha=0.05$보다 작으므로 $H_0=\rho_1= ... =\rho_{12}=0$를 기각한다. 따라서 y를 백색잡음으로 보기 어렵다.
+
+```{r}
+pm10w %>% features(y, ljung_box,lag=12, dof=0)
+```
+
+# 서울 미세먼지 
+```{r}
+pm10s <- pm10w %>%
+          filter(city=='seoul') %>%
+          select(-city)
+pm10s
+```
+
+## 시계열 그림
+```{r}
+autoplot(pm10s)+
+  labs(title="monthly finedust measured quantity of Seoul")+
+  xlab("month")
+```
+
+## 계절성 검토
+* 서울의 미세먼지 측정량은 2월~5월 , 10월~12월에 증가하고, 7~9월에 감소하는 계절성을 보인다.
+```{r}
+pm10s %>% gg_season(y, labels = "both")+
+  ylab("finedust(㎍/m³)")+
+  xlab("year month")+
+  ggtitle("Seasonal plot : finedust measured quantity of seoul")
+```
+
+```{r}
+pm10s %>%
+  gg_subseries(y) +
+  ylab("finedust(㎍/m³)") +
+  xlab("month")+
+  ggtitle("Seasonal subseries plot : findust measured quantity of seoul")
+```
+
+## 시계열 그림, 계절성 검토. 추세여부, 등분산성등을 설명하시오
+* 서울의 미세먼지 측정량은 2월~5월 , 10월~12월에 증가하고, 7~9월에 감소하는 계절성을 보인다.
+* 추세는 존재하지않는 것으로 보이며 등분산성을 가지는 것으로 보인다.
+
+
+## 자료 분할
+* TRN(적합용) : 2010.1~2017.12 월별 미세먼지 측졍량
+* TST(검정용) : 2018.1~2019.12ㅎ 월별 미세먼지 측정량
+```{r}
+TRN <- filter_index(pm10s, ~'2017 12')
+TST <- filter_index(pm10s,'2018 1'~'2020 1')
+```
+
+## TRN를  X11, SEATS, STL로 분해하고 설명하시오
+### x11 decomposition
+* 분해결과 미세먼지 측정량은 몇년도든 간 3월에 가장 높다.
+* 뚜렷한 계절성을 갖고, 등분산이며 결정적 추세는 존재하지않는 것으로 보인다.
+
+```{r}
+library(seasonal)
+x11_dcmp <- pm10s %>%
+  model(x11 = feasts:::X11(y, type = "additive")) %>%
+  components()
+autoplot(x11_dcmp) + xlab("Year Month") +
+  ggtitle("Additive X11 decomposition of finedust measured quantity in the Seoul")
+```
+
+```{r}
+x11_dcmp %>%
+  ggplot(aes(x = yymm)) +
+  geom_line(aes(y = y, colour = "Data")) +
+  geom_line(aes(y = season_adjust, colour = "Seasonally Adjusted")) +
+  geom_line(aes(y = trend, colour = "Trend")) +
+  xlab("Year Month") + ylab("㎍/m³") +
+  ggtitle("finedust measured quantity in the Seoul") +
+  scale_colour_manual(values=c("gray","blue","red"),
+             breaks=c("Data","Seasonally Adjusted","Trend"))
+```
+
+```{r}
+x11_dcmp %>%
+  gg_subseries(seasonal)
+```
+
+### SEATS decomposition
+* 분해결과 서울시 미세먼지 측정량은 감소하는 추세이며 등분산이고 뚜렷한 계절성을 가지는 것으로 보인다.
+```{r}
+seats_dcmp <- pm10s %>%
+  model(seats = feasts:::SEATS(y)) %>%
+  components()
+autoplot(seats_dcmp)+ xlab("Year Month") +
+  ggtitle("Additive X11 decomposition of finedust measured quantity in the Seoul")
+```
+
+### STL decomposition
+* 분해결과 결정적 추세는 존재하지 않으며 등분산이며 뚜렷한 계절성을 가지는 것으로보인다.
+```{r}
+pm10s %>%
+  model(STL(y ~ trend(window=7) + season(window='periodic'),
+    robust = TRUE)) %>%
+  components() %>%
+  autoplot()+ xlab("Year Month") +
+  ggtitle("Additive X11 decomposition of finedust measured quantity in the Seoul")
+```
+
+## 단순예측법 실행
+### MBL 생성
+```{r}
+MS <- model(TRN,
+      mn = MEAN(y),
+      rw = NAIVE(y),
+      rwd = RW(y~drift()),
+      srw = SNAIVE(y))
+MS
+```
+
+```{r}
+AS <- augment(MS)
+autoplot(AS, .fitted)+
+  autolayer(AS,y,color='gray',size=2)+
+  ggtitle('TRN: augment(MS)$.fitted')
+```
+
+```{r}
+autoplot(AS,.resid)+
+  ggtitle('TRN: augment(MS)$.resid')
+```
+
+```{r}
+features(AS,.resid,ljung_box, lag=4, dof=0)
+```
+
+### FBL생성
+```{r}
+FS <- forecast(MS, data=pm10s)
+FS
+autoplot(FS,TRN, level=NULL)+
+  autolayer(TST,y)
+autoplot(FS,pm10s,level=NULL,size=2)
+```
+
+### 성능 평가
+#### TRN에 대한 성능평가
+* TRN에서의 성능은 rwd의 RMSE,MAE,MAPE가 각각 06916,9.445097,21.17628로 rwd모델이 가장 우수한 것으로 나타났다.
+```{r}
+as.data.frame(accuracy(MS))
+```
+#### TST에 대한 성능평가
+* TST에서의 성능은 SRW의 RMSE,MAE,MAPE가 각각 9.313968, 7.916667,21.54606로 가장 우수한것으로 나타났다.
+```{r}
+as.data.frame(accuracy(FS,  data=pm10s))
+```
+
+### 최종모형 -SNAIVE
+* TST에서 성능이 가장 좋은 snaive모델을 최종모형으로 선택
+```{r}
+MSRW <- model(TRN,
+      srw = SNAIVE(y))
+MSRW
+```
+
+```{r}
+ASRW <- augment(MSRW)
+ASRW
+```
+
+### 예측값 생성
+```{r}
+FSRW <- forecast(MSRW, data=pm10s)
+```
+
+### 모형평가
+* TRN평가
+```{r}
+accuracy(MSRW)
+```
+* TST평가
+```{r}
+accuracy(FSRW, pm10s)
+```
+
+### 잔차 검토 
+* 잔차는 등분산에 가깝고, 잔차의 ACF에서 잔차의 자기상관이 없고, 정규분포를 따르는 것으로 보인다.
+```{r}
+MSRW %>% 
+  gg_tsresiduals()
+```
+
+#### 잔차의 백색잡음 검정
+* p-value가 $\alpha=0.05$보다 크다.따라서 $H_0=\rho_1= ... =\rho_{12}=0$를 기각할 수 없다. 
+```{r}
+features(ASRW,.resid, ljung_box, lag=12,dof=0)
+```
+
