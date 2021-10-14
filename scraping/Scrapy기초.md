@@ -21,6 +21,7 @@ scrapy startproject <스파이더 명>
 ```
 이 책에서는 wikiSpider라는 이름을 주었다.
 이 명령행을 실행하면 프로젝트 디렉터리에 서브 디렉터리가 생긴다. 이 디렉터리의 파일 구조는 아래와 같다.
+![treeWikiSpider](https://user-images.githubusercontent.com/54613024/137235002-1977eb31-d65a-40ab-80fe-4a6159cf25bc.png)
 
 
 ## 간단한 스크레이퍼 작성하기
