@@ -182,5 +182,12 @@
         - 오류가 발생하였을 경우
         - 송신자가 BGP 세션을 종료하고자 할 경우
 
+# 정리
+
+<img width="710" alt="스크린샷 2021-12-02 오후 6 05 37" src="https://user-images.githubusercontent.com/54613024/144391114-64205bdd-4353-4cc8-a406-ffce6f2eb3c7.png">
+
+![image](https://user-images.githubusercontent.com/54613024/144391247-a3284105-e76c-40e0-870a-d59b28b31c0b.png)
+
+
 # reference
 - 컴퓨터 네트워크 - 개정3판, 정진욱 외 지음, 2018, 생능
