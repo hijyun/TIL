@@ -14,6 +14,8 @@ $ pip install kfp
 <br>
 <br>
 
+---
+
 ## Connect to kubeflow Pipelines from outside your cluster
 
 SDK 클라이언트를 사용하여 kubeflow pipelines에 연결하고 환경 변수를 사용해 SDK 클라이언트 구성.
@@ -45,7 +47,7 @@ Output exceeds the size limit. Open the full output data in a text editor
 <br>
 <br>
 
-
+---
 ## Build a Pipeline
 
 ### library load
@@ -150,9 +152,13 @@ def my_pipeline(url):
 3. kfp.components.load_component_from_url를 사용하여 파이프라인 작업을 생성
 
 <br>
+<br>
 
 > web_downloader_task는 url파이프라인 매개변수를 사용하고, merge_csv_task는 web_downloader_task의 data 출력에 사용함.
 
+
+<br>
+<br>
 
 ### Compile and run pipeline
 
@@ -194,6 +200,113 @@ client.create_run_from_pipeline_func(
 
 <br>
 <br>
+<br>
+
+---
+## Building Components
+Components는 ML워크플로에서 한 단계를 수행하는 코드의 집합이다. Components를 생성하려면 구성 요소의 implementation을 빌드하고 구성 요소의 specification을 정의해야한다.
+
+* 구성 요소의 입력과 출력은 문자열, 숫자, 논리값 같은 작은 값으로 전달됨. csv같이 큰 파일은 경로로 전달해야함.
+* 출력을 반환하려면 출력 데이터를 파일로 저장하고 파이프라인에 알려줘야함. 
+
+<br>
+<br>
+
+### Containerize Component's code
+kubeflow pipeline에서 component를 실행시키려면, component는 반드시 Docker 컨테이너 이미지로 패키지 되어야하고, container registry에 publish되어야함.
+
+<br>
+
+1. base container image Dockerfile 생성
+
+* base container image
+* 코드가 돌아가기위해 설치해야할 종석성들
+* 컨테이너에 component를 위해 돌아가야할 코드 파일 copy
+
+<br>
+
+```yaml
+FROM python:3.7
+RUN python3 -m pip install keras
+COPY ./src /pipelines/component/src
+```
+
+<br>
+
+2. `build_image.sh`라는 이름의 스크립트 생성
+
+* 컨테이너 이미지를 빌드하고 컨테이너 레지스트리에 push하기 위해 Docker사용. 쿠버네티스 클러스터가 component를 실행시키기 위해 컨테이너 레지스트리에 접근할 수 있어야함.
+* 아래의 예시는 컨테이너 이미지를 빌드하고, 레지스트리에 push하고 strict image name을 출력하는 예시이다.
+각 component를 실행할 때 strict image name을 사용하면 어떤 버전의 컨테이너를 사용하는지 확인할 수 있어서 좋다.
+
+
+
+<br>
+
+```sh
+#!/bin/bash -e
+image_name=gcr.io/my-org/my-image
+image_tag=latest
+full_image_name=${image_name}:${image_tag}
+
+cd "$(dirname "$0")" 
+docker build -t "${full_image_name}" .
+docker push "$full_image_name"
+
+# Output the strict image name, which contains the sha256 image digest
+docker inspect --format="{{index .RepoDigests 0}}" "${full_image_name}"
+```
+
+<br>
+
+* `image_name` : 컨테이너 레지스트리에 있는 컨테이너 이미지 이름을 지정
+
+<br>
+
+```bash
+chmod +x build_image.sh
+```
+
+3. `build_image.sh` 스크립트 실행
+4. `docker run` 
+
+<br>
+<br>
+
+### Creating a component specification
+component의 implementation, interface, metadata를 정의할 component specification을 생성해야함.
+
+* component’s metadata : name, description
+* component’s interface : components의 input, output
+* component’s implementation : Docker 컨테이너 이미지. 어떻게 input을 통과해서 output을 얻는지
+
+<br>
+
+
+#### Define component's implementation
+
+#### Define component's interface
+
+#### Define component's metadata
+
+<br>
+<br>
+
+
+<br>
+
+
+
+
+
+
+
+
+<br>
+<br>
+
+
 
 # Reference
 * [kubeflow Docs](https://www.kubeflow.org/docs/components/pipelines/sdk/build-pipeline/)
+
