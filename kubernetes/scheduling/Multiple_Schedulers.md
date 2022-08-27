@@ -52,8 +52,9 @@ kubectl get pods --namespace=kube-system
 ## View Events
 
 -   어떤 스케줄러가 선택되었는지 어떻게 볼 수 있을까?  
-<br>
-```bash 
+
+
+```
 kubectl get events 
 ```
 <br>
